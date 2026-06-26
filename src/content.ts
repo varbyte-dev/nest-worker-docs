@@ -2,6 +2,7 @@ export type Lang = "en" | "es";
 
 export interface CodeBlock {
   label: string;
+  language: string;
   code: string;
 }
 
@@ -45,6 +46,58 @@ npm install
 nest-worker generate resource users
 npm run dev`,
 };
+
+const generatedTreeCode = {
+  en: `my-api/
+├─ package.json
+├─ pnpm-workspace.yaml
+├─ wrangler.toml
+├─ tsconfig.json
+└─ src/
+   ├─ worker.ts
+   ├─ common/
+   │  ├─ filters/app-error.filter.ts
+   │  └─ exceptions/app.exception.ts
+   ├─ config/app.config.ts
+   ├─ database/migrations/.gitkeep
+   └─ modules/
+      ├─ app/
+      │  ├─ app.controller.ts
+      │  ├─ app.module.ts
+      │  └─ app.service.ts
+      └─ health/health.controller.ts`,
+  es: `mi-api/
+├─ package.json
+├─ pnpm-workspace.yaml
+├─ wrangler.toml
+├─ tsconfig.json
+└─ src/
+   ├─ worker.ts
+   ├─ common/
+   │  ├─ filters/app-error.filter.ts
+   │  └─ exceptions/app.exception.ts
+   ├─ config/app.config.ts
+   ├─ database/migrations/.gitkeep
+   └─ modules/
+      ├─ app/
+      │  ├─ app.controller.ts
+      │  ├─ app.module.ts
+      │  └─ app.service.ts
+      └─ health/health.controller.ts`,
+};
+
+const generatedResourceTreeCode = `src/modules/users/
+├─ users.module.ts
+├─ users.controller.ts
+├─ users.service.ts
+├─ users.repository.ts
+├─ users.model.ts
+└─ dto/
+   ├─ create-users.dto.ts
+   └─ update-users.dto.ts
+
+src/database/migrations/
+└─ 20260626120000_create_users.sql`;
 
 const workerCode = `import 'reflect-metadata';
 import { Module, createApplication, cors, requestLogger } from '@varbyte/nest-worker';
@@ -101,6 +154,104 @@ export class UsersController {
   @UsePipe(validateCreateUser)
   create(@D1() db: D1Database, @Body() body: CreateUserDto) {
     return this.users.create(db, body);
+  }
+}`;
+
+const validateBodyCode = `import {
+  Body,
+  Controller,
+  Post,
+  UsePipe,
+  validateBody,
+} from '@varbyte/nest-worker';
+
+interface CreateUserDto {
+  name?: string;
+  email?: string;
+}
+
+const validateCreateUser = validateBody<CreateUserDto>((body) => {
+  if (!body || typeof body !== 'object') {
+    return 'Request body is required';
+  }
+
+  const issues = [];
+  if (!body.name) {
+    issues.push({ field: 'name', message: 'Name is required' });
+  }
+  if (!body.email?.includes('@')) {
+    issues.push({
+      field: 'email',
+      message: 'Email must be valid',
+      code: 'invalid_email',
+    });
+  }
+
+  return issues;
+});
+
+@Controller('users')
+export class UsersController {
+  @Post()
+  @UsePipe(validateCreateUser)
+  create(@Body() body: CreateUserDto) {
+    return { ok: true, body };
+  }
+}`;
+
+const createValidationPipeCode = `import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  UsePipe,
+  createValidationPipe,
+} from '@varbyte/nest-worker';
+
+const validateUserLookup = createValidationPipe([
+  {
+    type: 'param',
+    key: 'id',
+    validate: (id) => {
+      if (!Number.isInteger(Number(id))) {
+        return { field: 'id', message: 'id must be a number' };
+      }
+    },
+  },
+  {
+    type: 'query',
+    key: 'includePosts',
+    validate: (value) => {
+      if (value !== undefined && !['true', 'false'].includes(String(value))) {
+        return {
+          field: 'includePosts',
+          message: 'includePosts must be true or false',
+        };
+      }
+    },
+  },
+]);
+
+@Controller('users')
+export class UsersController {
+  @Get(':id')
+  @UsePipe(validateUserLookup)
+  findOne(@Param('id') id: string, @Query('includePosts') includePosts?: string) {
+    return { id: Number(id), includePosts: includePosts === 'true' };
+  }
+}`;
+
+const validationErrorCode = `{
+  "statusCode": 400,
+  "message": "Validation failed",
+  "details": {
+    "issues": [
+      {
+        "field": "email",
+        "message": "Email must be valid",
+        "code": "invalid_email"
+      }
+    ]
   }
 }`;
 
@@ -208,13 +359,20 @@ export const content: Record<Lang, LocaleContent> = {
         body: [
           "The CLI is the recommended path for new applications because it creates the Worker entry point, TypeScript config, Wrangler config, error filter, and pnpm build approvals needed by Wrangler dependencies.",
           "After generating a resource, run the Worker locally with Wrangler and start editing the generated module.",
+          "Keep generated files close to their module. Treat `src/modules/<feature>` as the feature boundary and keep cross-cutting code in `src/common` or `src/config`.",
         ],
         bullets: [
           "Use Node.js 18 or newer.",
-          "Use the CLI for new projects.",
-          "Use `doctor` when a project does not compile or deploy.",
+          "Generate resources with the CLI, then edit the DTOs, model, migration, and service logic.",
+          "Keep validation at the controller boundary with `@UsePipe()`.",
+          "Use `requestLogger({ json: true })` and a global error filter before publishing an API.",
+          "Use `doctor` when a project does not compile, install, or deploy.",
         ],
-        code: [{ label: "Terminal", code: quickStartCode.en }],
+        code: [
+          { label: "Terminal", language: "bash", code: quickStartCode.en },
+          { label: "Project generated by `nest-worker new`", language: "text", code: generatedTreeCode.en },
+          { label: "Files generated by `nest-worker generate resource users`", language: "text", code: generatedResourceTreeCode },
+        ],
       },
       {
         id: "application",
@@ -225,7 +383,7 @@ export const content: Record<Lang, LocaleContent> = {
           "`createApplication()` turns a module into a Cloudflare Worker fetch handler.",
           "Register middleware before exporting `app.handler`. Middleware runs before route handlers and can short-circuit requests by returning a Response.",
         ],
-        code: [{ label: "src/worker.ts", code: workerCode }],
+        code: [{ label: "src/worker.ts", language: "ts", code: workerCode }],
       },
       {
         id: "controllers",
@@ -236,7 +394,7 @@ export const content: Record<Lang, LocaleContent> = {
           "Controllers define route groups. Method decorators such as `@Get`, `@Post`, `@Put`, and `@Delete` define route handlers.",
           "Parameter decorators read request data: `@Body`, `@Param`, `@Query`, `@Headers`, `@Req`, `@Env`, and `@D1`.",
         ],
-        code: [{ label: "users.controller.ts", code: controllerCode }],
+        code: [{ label: "users.controller.ts", language: "ts", code: controllerCode }],
       },
       {
         id: "modules-di",
@@ -263,7 +421,7 @@ export const content: Record<Lang, LocaleContent> = {
           "`D1Repository` gives you common CRUD methods. Identifiers are sanitized and values use parameterized bindings.",
           "For custom SQL, use `raw()` or `rawFirst()` with placeholders.",
         ],
-        code: [{ label: "users.service.ts", code: d1Code }],
+        code: [{ label: "users.service.ts", language: "ts", code: d1Code }],
       },
       {
         id: "validation",
@@ -273,6 +431,17 @@ export const content: Record<Lang, LocaleContent> = {
         body: [
           "Use `validateBody()` for the common case. Use `createValidationPipe()` when you need to validate body, params, query, headers, or env values.",
           "Validators can return nothing, `true`, `false`, a string, one issue, or a list of issues.",
+          "When validation fails, the framework throws `BadRequestException` with a stable list of issues that can be normalized by your global error filter.",
+        ],
+        bullets: [
+          "Validate at the edge of the app, before calling services.",
+          "Return structured issues when clients need field-level errors.",
+          "Keep business rules in services; keep request shape checks in pipes.",
+        ],
+        code: [
+          { label: "validateBody() for JSON body validation", language: "ts", code: validateBodyCode },
+          { label: "createValidationPipe() for params and query", language: "ts", code: createValidationPipeCode },
+          { label: "Validation error shape", language: "json", code: validationErrorCode },
         ],
       },
       {
@@ -284,7 +453,7 @@ export const content: Record<Lang, LocaleContent> = {
           "`requestLogger()` produces request ids, durations, status codes, and optional JSON logs.",
           "`devRateLimit()` is intentionally in-memory and is not production-safe across Cloudflare isolates. Use Durable Objects, KV with tradeoffs, or Cloudflare platform controls for production rate limiting.",
         ],
-        code: [{ label: "src/worker.ts", code: middlewareCode }],
+        code: [{ label: "src/worker.ts", language: "ts", code: middlewareCode }],
       },
       {
         id: "errors",
@@ -295,7 +464,7 @@ export const content: Record<Lang, LocaleContent> = {
           "Use built-in exceptions such as `BadRequestException`, `UnauthorizedException`, `ForbiddenException`, `NotFoundException`, `ConflictException`, and `InternalServerErrorException`.",
           "Register global filters with `app.useErrorFilter()` when your API needs a stable error envelope.",
         ],
-        code: [{ label: "app-error.filter.ts", code: errorFilterCode }],
+        code: [{ label: "app-error.filter.ts", language: "ts", code: errorFilterCode }],
       },
       {
         id: "cli",
@@ -323,6 +492,7 @@ export const content: Record<Lang, LocaleContent> = {
         code: [
           {
             label: "wrangler.toml",
+            language: "toml",
             code: `name = "my-api"
 main = "src/worker.ts"
 compatibility_date = "2025-01-01"
@@ -359,13 +529,20 @@ database_id = "YOUR_DATABASE_ID"`,
         body: [
           "La CLI es la ruta recomendada para aplicaciones nuevas porque crea el entry point del Worker, configuración TypeScript, configuración Wrangler, filtro de errores y aprobaciones de build de pnpm necesarias para dependencias de Wrangler.",
           "Después de generar un recurso, ejecuta el Worker localmente con Wrangler y empieza a editar el módulo generado.",
+          "Mantén los archivos generados cerca de su módulo. Trata `src/modules/<feature>` como el límite de la feature y deja código transversal en `src/common` o `src/config`.",
         ],
         bullets: [
           "Usa Node.js 18 o superior.",
-          "Usa la CLI para proyectos nuevos.",
-          "Usa `doctor` cuando un proyecto no compile o no despliegue.",
+          "Genera recursos con la CLI y luego edita DTOs, modelo, migración y lógica del servicio.",
+          "Mantén la validación en el borde del controlador con `@UsePipe()`.",
+          "Usa `requestLogger({ json: true })` y un filtro global de errores antes de publicar una API.",
+          "Usa `doctor` cuando un proyecto no compile, no instale o no despliegue.",
         ],
-        code: [{ label: "Terminal", code: quickStartCode.es }],
+        code: [
+          { label: "Terminal", language: "bash", code: quickStartCode.es },
+          { label: "Proyecto generado por `nest-worker new`", language: "text", code: generatedTreeCode.es },
+          { label: "Archivos generados por `nest-worker generate resource users`", language: "text", code: generatedResourceTreeCode },
+        ],
       },
       {
         id: "application",
@@ -376,7 +553,7 @@ database_id = "YOUR_DATABASE_ID"`,
           "`createApplication()` convierte un módulo en un fetch handler de Cloudflare Workers.",
           "Registra middleware antes de exportar `app.handler`. El middleware corre antes de los handlers y puede cortar la request devolviendo un Response.",
         ],
-        code: [{ label: "src/worker.ts", code: workerCode }],
+        code: [{ label: "src/worker.ts", language: "ts", code: workerCode }],
       },
       {
         id: "controllers",
@@ -387,7 +564,7 @@ database_id = "YOUR_DATABASE_ID"`,
           "Los controladores definen grupos de rutas. Decoradores como `@Get`, `@Post`, `@Put` y `@Delete` definen handlers.",
           "Los decoradores de parámetros leen datos del request: `@Body`, `@Param`, `@Query`, `@Headers`, `@Req`, `@Env` y `@D1`.",
         ],
-        code: [{ label: "users.controller.ts", code: controllerCode }],
+        code: [{ label: "users.controller.ts", language: "ts", code: controllerCode }],
       },
       {
         id: "modules-di",
@@ -414,7 +591,7 @@ database_id = "YOUR_DATABASE_ID"`,
           "`D1Repository` te da métodos CRUD comunes. Los identificadores se sanitizan y los valores usan bindings parametrizados.",
           "Para SQL personalizado, usa `raw()` o `rawFirst()` con placeholders.",
         ],
-        code: [{ label: "users.service.ts", code: d1Code }],
+        code: [{ label: "users.service.ts", language: "ts", code: d1Code }],
       },
       {
         id: "validation",
@@ -424,6 +601,17 @@ database_id = "YOUR_DATABASE_ID"`,
         body: [
           "Usa `validateBody()` para el caso común. Usa `createValidationPipe()` cuando necesites validar body, params, query, headers o env.",
           "Los validadores pueden devolver nada, `true`, `false`, un string, un issue o una lista de issues.",
+          "Cuando la validación falla, el framework lanza `BadRequestException` con una lista estable de issues que puedes normalizar con tu filtro global de errores.",
+        ],
+        bullets: [
+          "Valida en el borde de la app, antes de llamar servicios.",
+          "Devuelve issues estructurados cuando el cliente necesita errores por campo.",
+          "Deja reglas de negocio en servicios; deja validaciones de forma del request en pipes.",
+        ],
+        code: [
+          { label: "validateBody() para validar JSON body", language: "ts", code: validateBodyCode },
+          { label: "createValidationPipe() para params y query", language: "ts", code: createValidationPipeCode },
+          { label: "Forma del error de validación", language: "json", code: validationErrorCode },
         ],
       },
       {
@@ -435,7 +623,7 @@ database_id = "YOUR_DATABASE_ID"`,
           "`requestLogger()` produce request ids, duración, status codes y logs JSON opcionales.",
           "`devRateLimit()` usa memoria local y no es seguro para producción entre isolates de Cloudflare. Para producción usa Durable Objects, KV con tradeoffs o controles de la plataforma Cloudflare.",
         ],
-        code: [{ label: "src/worker.ts", code: middlewareCode }],
+        code: [{ label: "src/worker.ts", language: "ts", code: middlewareCode }],
       },
       {
         id: "errors",
@@ -446,7 +634,7 @@ database_id = "YOUR_DATABASE_ID"`,
           "Usa excepciones integradas como `BadRequestException`, `UnauthorizedException`, `ForbiddenException`, `NotFoundException`, `ConflictException` e `InternalServerErrorException`.",
           "Registra filtros globales con `app.useErrorFilter()` cuando tu API necesite un envelope estable de errores.",
         ],
-        code: [{ label: "app-error.filter.ts", code: errorFilterCode }],
+        code: [{ label: "app-error.filter.ts", language: "ts", code: errorFilterCode }],
       },
       {
         id: "cli",
@@ -474,6 +662,7 @@ database_id = "YOUR_DATABASE_ID"`,
         code: [
           {
             label: "wrangler.toml",
+            language: "toml",
             code: `name = "mi-api"
 main = "src/worker.ts"
 compatibility_date = "2025-01-01"

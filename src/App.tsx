@@ -16,7 +16,19 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
+import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
+import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
+import toml from "react-syntax-highlighter/dist/esm/languages/prism/toml";
+import ts from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { content, DocSection, Lang } from "./content";
+
+SyntaxHighlighter.registerLanguage("bash", bash);
+SyntaxHighlighter.registerLanguage("json", json);
+SyntaxHighlighter.registerLanguage("toml", toml);
+SyntaxHighlighter.registerLanguage("ts", ts);
+SyntaxHighlighter.registerLanguage("typescript", ts);
 
 const icons: Record<string, ComponentType<{ size?: number }>> = {
   Start: Terminal,
@@ -247,7 +259,7 @@ export function App() {
   );
 }
 
-function CodeBlockView({ block }: { block: { label: string; code: string } }) {
+function CodeBlockView({ block }: { block: { label: string; language: string; code: string } }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -260,9 +272,27 @@ function CodeBlockView({ block }: { block: { label: string; code: string } }) {
     <div className="code-card">
       <div className="code-head">
         <span>{block.label}</span>
+        <small>{block.language}</small>
         <button onClick={copy}>{copied ? "Copied" : "Copy"}</button>
       </div>
-      <pre><code>{block.code}</code></pre>
+      <SyntaxHighlighter
+        language={block.language}
+        style={oneDark}
+        customStyle={{
+          margin: 0,
+          padding: "18px",
+          background: "#020617",
+          fontSize: "0.9rem",
+          lineHeight: 1.7,
+        }}
+        codeTagProps={{
+          style: {
+            fontFamily: "\"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace",
+          },
+        }}
+      >
+        {block.code}
+      </SyntaxHighlighter>
     </div>
   );
 }
