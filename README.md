@@ -2,6 +2,8 @@
 
 Bilingual documentation site for `@varbyte/nest-worker` and `@varbyte/nest-worker-cli`.
 
+Published site: https://varbyte-dev.github.io/nest-worker-docs/
+
 ## Local development
 
 ```bash
