@@ -336,6 +336,91 @@ const cliRowsEs = [
   ["list", "Lista módulos y recursos compartidos generados"],
 ];
 
+const cacheCode = `import { cacheMiddleware, withCache, invalidateCache } from '@varbyte/nest-worker-cache';
+import { createApplication, Controller, Get, UseMiddleware } from '@varbyte/nest-worker';
+
+// Global middleware — cache all GET responses for 1 hour via Cache API
+const app = createApplication(AppModule);
+app.use(cacheMiddleware({ ttl: 3600 }));
+
+// Per-route with KV backend
+@Controller('products')
+export class ProductsController {
+  @Get()
+  @UseMiddleware(cacheMiddleware({
+    ttl: 60,
+    storage: 'kv',
+    kvBinding: 'PRODUCTS_CACHE',
+  }))
+  async getAll() { return { data: 'cached response' }; }
+}
+
+// Or wrap the fetch handler for precise control
+export default {
+  fetch(req, env, ctx) {
+    return withCache(req, env, ctx, { ttl: 3600 }, () => app.handler.fetch(req, env, ctx));
+  },
+};
+
+// Invalidate a cached URL
+await invalidateCache(env, '/products/123', 'kv', 'PRODUCTS_CACHE');`;
+
+const authCode = `import { AuthGuard, getAuthUser } from '@varbyte/nest-worker-auth';
+import { Controller, Get, Req, UseMiddleware } from '@varbyte/nest-worker';
+
+// JWT Authentication
+@Controller()
+class ProfileController {
+  @Get('/profile')
+  @UseMiddleware(AuthGuard.jwt({ secret: process.env.JWT_SECRET }))
+  getProfile(@Req() req: Request) {
+    const user = getAuthUser(req);
+    return { user };
+  }
+}
+
+// Cloudflare Access
+@Get('/admin')
+@UseMiddleware(AuthGuard.cfAccess({
+  teamDomain: 'my-team.cloudflareaccess.com',
+  audience: '12a345b6c7d8e9f0a1b2c3d4e5f6a7b8',
+}))
+getAdmin(@Req() req: Request) { return { admin: getAuthUser(req) }; }
+
+// API Key
+@UseMiddleware(AuthGuard.apiKey({ keyEnvKey: 'API_KEY' }))
+
+// Multi-strategy (any mode)
+@UseMiddleware(AuthGuard({
+  strategies: [
+    { strategy: 'jwt', secretEnvKey: 'JWT_SECRET' },
+    { strategy: 'api-key', keyEnvKey: 'API_KEY' },
+  ],
+  mode: 'any',
+}))`;
+
+const rateLimitCode = `import { RateLimitGuard } from '@varbyte/nest-worker-rate-limit';
+import { Controller, Get, UseMiddleware } from '@varbyte/nest-worker';
+
+// Per-route rate limit (in-memory, for development)
+@Controller()
+class ApiController {
+  @Get('/api')
+  @UseMiddleware(RateLimitGuard({ windowMs: 60_000, max: 100 }))
+  getData() { return { ok: true }; }
+}
+
+// Global rate limit (KV, for production)
+import { createApplication } from '@varbyte/nest-worker';
+const app = createApplication(AppModule);
+app.use(RateLimitGuard({
+  max: 1000,
+  storage: 'kv',
+  kvBinding: 'RATE_LIMIT',
+}));
+export default app.handler;`
+
+
 export const content: Record<Lang, LocaleContent> = {
   en: {
     lang: "en",
@@ -465,6 +550,63 @@ export const content: Record<Lang, LocaleContent> = {
           "Register global filters with `app.useErrorFilter()` when your API needs a stable error envelope.",
         ],
         code: [{ label: "app-error.filter.ts", language: "ts", code: errorFilterCode }],
+      },
+      {
+        id: "ecosystem-cache",
+        group: "Ecosystem",
+        title: "Cache middleware",
+        description: "Cache responses at the edge using Cloudflare Cache API or KV.",
+        body: [
+          "`@varbyte/nest-worker-cache` provides three utilities: `cacheMiddleware()` for global/per-route caching, `withCache()` for precise fetch-handler control, and `invalidateCache()` for manual invalidation.",
+          "The Cache API strategy (`storage: 'cache-api'`) stores responses in Cloudflare's edge cache at no extra cost. The KV strategy (`storage: 'kv'`) uses a KV namespace for persistent caching with custom TTL.",
+        ],
+        bullets: [
+          "Use `cacheMiddleware()` with `app.use()` for global caching or `@UseMiddleware()` per route.",
+          "Use `withCache()` when you need to cache the response after it's produced by the handler.",
+          "Use `invalidateCache()` to purge a cached entry by its URL.",
+          "Set `staleWhileRevalidate: true` to serve stale data while fetching fresh content in the background.",
+        ],
+        code: [
+          { label: "cache.ts", language: "ts", code: cacheCode },
+        ],
+      },
+      {
+        id: "ecosystem-auth",
+        group: "Ecosystem",
+        title: "Auth middleware",
+        description: "Authenticate requests with JWT, Cloudflare Access, or API keys.",
+        body: [
+          "`@varbyte/nest-worker-auth` validates credentials using Web Crypto API — zero external dependencies. Supports three strategies and multi-strategy composition.",
+          "Use `getAuthUser(req)` in your handler to retrieve the authenticated user. The user object includes `id`, `name`, `email`, `roles`, `raw` claims, and the `strategy` name.",
+        ],
+        bullets: [
+          "JWT: supports HS256, RS256, and ES256 with issuer/audience validation and clock tolerance.",
+          "Cloudflare Access: fetches JWKS from your team domain, caches keys for 1 hour.",
+          "API Key: header-based auth with static key, env binding, or comma-separated rotation keys.",
+          "Multi-strategy: combine strategies with `any` or `all` mode.",
+        ],
+        code: [
+          { label: "auth.ts", language: "ts", code: authCode },
+        ],
+      },
+      {
+        id: "ecosystem-rate-limit",
+        group: "Ecosystem",
+        title: "Rate limit middleware",
+        description: "Protect your APIs with configurable rate limits.",
+        body: [
+          "`@varbyte/nest-worker-rate-limit` provides in-memory (development) and KV (production) storage backends. Standard rate limit headers are included: `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.",
+          "The KV strategy uses Cloudflare KV for persistent counters across edge locations. Note that KV is eventually consistent — for precise limits, consider Durable Objects.",
+        ],
+        bullets: [
+          "Custom key extractor: IP, API key, user ID, or any request attribute.",
+          "Custom status code and error message (string or JSON object).",
+          "Automatic window reset — no manual cleanup needed.",
+          "Standard headers for client-side backoff.",
+        ],
+        code: [
+          { label: "rate-limit.ts", language: "ts", code: rateLimitCode },
+        ],
       },
       {
         id: "cli",
@@ -635,6 +777,63 @@ database_id = "YOUR_DATABASE_ID"`,
           "Registra filtros globales con `app.useErrorFilter()` cuando tu API necesite un envelope estable de errores.",
         ],
         code: [{ label: "app-error.filter.ts", language: "ts", code: errorFilterCode }],
+      },
+      {
+        id: "ecosystem-cache",
+        group: "Ecosistema",
+        title: "Middleware de caché",
+        description: "Cachea respuestas en el edge usando Cloudflare Cache API o KV.",
+        body: [
+          "`@varbyte/nest-worker-cache` provee tres utilidades: `cacheMiddleware()` para caché global/por ruta, `withCache()` para control preciso del fetch handler, e `invalidateCache()` para invalidación manual.",
+          "La estrategia Cache API (`storage: 'cache-api'`) almacena respuestas en el edge de Cloudflare sin costo adicional. La estrategia KV (`storage: 'kv'`) usa un namespace de KV para caché persistente con TTL personalizado.",
+        ],
+        bullets: [
+          "Usa `cacheMiddleware()` con `app.use()` para caché global o `@UseMiddleware()` por ruta.",
+          "Usa `withCache()` cuando necesites cachear la respuesta después de producirla.",
+          "Usa `invalidateCache()` para purgar una entrada caché por URL.",
+          "Activa `staleWhileRevalidate: true` para servir datos antiguos mientras se refrescan en segundo plano.",
+        ],
+        code: [
+          { label: "cache.ts", language: "ts", code: cacheCode },
+        ],
+      },
+      {
+        id: "ecosystem-auth",
+        group: "Ecosistema",
+        title: "Middleware de autenticación",
+        description: "Autentica requests con JWT, Cloudflare Access o API keys.",
+        body: [
+          "`@varbyte/nest-worker-auth` valida credenciales usando Web Crypto API — cero dependencias externas. Soporta tres estrategias y composición multi-estrategia.",
+          "Usa `getAuthUser(req)` en tu handler para obtener el usuario autenticado. El objeto de usuario incluye `id`, `name`, `email`, `roles`, claims `raw` y el nombre de la `strategy`.",
+        ],
+        bullets: [
+          "JWT: soporta HS256, RS256 y ES256 con validación de issuer/audience y tolerancia de reloj.",
+          "Cloudflare Access: obtiene JWKS desde tu team domain, cachea llaves por 1 hora.",
+          "API Key: autenticación por header con key estática, env binding o keys de rotación separadas por coma.",
+          "Multi-estrategia: combina estrategias con modo `any` o `all`.",
+        ],
+        code: [
+          { label: "auth.ts", language: "ts", code: authCode },
+        ],
+      },
+      {
+        id: "ecosystem-rate-limit",
+        group: "Ecosistema",
+        title: "Middleware de rate limiting",
+        description: "Protege tus APIs con límites de tasa configurables.",
+        body: [
+          "`@varbyte/nest-worker-rate-limit` provee backends de almacenamiento en memoria (desarrollo) y KV (producción). Incluye headers estándar de rate limit: `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.",
+          "La estrategia KV usa Cloudflare KV para contadores persistentes entre ubicaciones edge. Nota que KV es eventualmente consistente — para límites precisos considera Durable Objects.",
+        ],
+        bullets: [
+          "Extractor de key personalizado: IP, API key, user ID o cualquier atributo del request.",
+          "Código de status y mensaje de error personalizables (string u objeto JSON).",
+          "Reinicio automático de ventana — sin limpieza manual necesaria.",
+          "Headers estándar para backoff del cliente.",
+        ],
+        code: [
+          { label: "rate-limit.ts", language: "ts", code: rateLimitCode },
+        ],
       },
       {
         id: "cli",
